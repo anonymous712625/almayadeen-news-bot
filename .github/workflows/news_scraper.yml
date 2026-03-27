@@ -10,23 +10,81 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
       
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'
         
-    - name: Install dependencies
+    - name: Install dependencies directly
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install beautifulsoup4==4.12.2
+        pip install requests==2.31.0
+        pip install python-telegram-bot==20.7
+        pip install APScheduler==3.10.4
+        pip install groq==0.4.1
+        pip install lxml==4.9.3
+        pip install pytz==2023.3
         
-    - name: Create directories
-      run: |
-        mkdir -p data logs
+    - name: Create data directory
+      run: mkdir -p data
         
-    - name: Run scraper
+    - name: Restore articles database
+      uses: actions/cache@v4
+      with:
+        path: data/articles.json
+        key: articles-${{ github.run_number }}
+        restore-keys: articles-
+        
+    - name: Run news scraper
       run: |
-        python -c "from src.scheduler import NewsScheduler; scheduler = NewsScheduler(); scheduler.scrape_and_notify()"
+        python3 << 'EOF'
+        import sys
+        sys.path.insert(0, '.')
+        
+        from src.scheduler import NewsScheduler
+        import logging
+        
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info("Starting scraper...")
+            scheduler = NewsScheduler()
+            scheduler.scrape_and_notify()
+            logger.info("✅ Scraping completed!")
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        EOF
+        
+    - name: Send daily summary if needed
+      run: |
+        python3 << 'EOF'
+        import sys
+        sys.path.insert(0, '.')
+        
+        from datetime import datetime
+        from config.config import Config
+        from src.scheduler import NewsScheduler
+        import logging
+        
+        logging.basicConfig(level=logging.INFO)
+        now = datetime.now(Config.TIMEZONE)
+        
+        if now.hour == 23 and now.minute >= 55:
+            NewsScheduler().send_daily_summary()
+            print("✅ Daily summary sent")
+        else:
+            print(f"⏰ Not summary time yet ({now.hour}:{now.minute})")
+        EOF
+        
+    - name: Save articles database
+      uses: actions/cache@v4
+      with:
+        path: data/articles.json
+        key: articles-${{ github.run_number }}
