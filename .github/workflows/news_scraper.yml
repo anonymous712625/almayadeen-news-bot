@@ -18,15 +18,10 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: Install dependencies directly
+    - name: Install dependencies
       run: |
-        pip install beautifulsoup4==4.12.2
-        pip install requests==2.31.0
-        pip install python-telegram-bot==20.7
-        pip install APScheduler==3.10.4
-        pip install groq==0.4.1
-        pip install lxml==4.9.3
-        pip install pytz==2023.3
+        pip install --upgrade pip
+        pip install beautifulsoup4 requests python-telegram-bot APScheduler groq lxml pytz feedparser
         
     - name: Create data directory
       run: mkdir -p data
@@ -39,6 +34,8 @@ jobs:
         restore-keys: articles-
         
     - name: Run news scraper
+      env:
+        PYTHONPATH: ${{ github.workspace }}
       run: |
         python3 << 'EOF'
         import sys
@@ -63,6 +60,8 @@ jobs:
         EOF
         
     - name: Send daily summary if needed
+      env:
+        PYTHONPATH: ${{ github.workspace }}
       run: |
         python3 << 'EOF'
         import sys
