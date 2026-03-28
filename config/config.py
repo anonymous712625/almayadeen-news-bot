@@ -7,8 +7,8 @@ class Config:
     TELEGRAM_CHAT_ID = "7574027479"
     GROQ_API_KEY = "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"
     
-    BASE_URL = "https://www.almayadeen.net"
-    NEWS_URL = "https://www.almayadeen.net/news"
+    BASE_URL = "https://almanar.com.lb"
+    NEWS_URL = "https://almanar.com.lb/news"
     
     REQUEST_DELAY = 3
     USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
