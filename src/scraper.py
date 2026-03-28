@@ -1,12 +1,9 @@
 import requests
-from bs4 import BeautifulSoup
-import time
+import feedparser
 import logging
 from datetime import datetime
 from config.config import Config
-from urllib.parse import urljoin
 import hashlib
-import re
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,20 +14,8 @@ logger = logging.getLogger(__name__)
 class AlmayadeenScraper:
     def __init__(self):
         self.session = requests.Session()
-        # Better headers to look like real browser
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0',
-            'Referer': 'https://www.google.com/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         
     def generate_article_id(self, url):
@@ -39,131 +24,95 @@ class AlmayadeenScraper:
     def scrape_articles(self):
         articles = []
         
-        try:
-            logger.info(f"Fetching articles from {Config.NEWS_URL}")
-            
-            # Add delay before request
-            time.sleep(2)
-            
-            response = self.session.get(
-                Config.NEWS_URL, 
-                timeout=20,
-                allow_redirects=True
-            )
-            
-            logger.info(f"Response status: {response.status_code}")
-            
-            if response.status_code == 403:
-                logger.error("403 Forbidden - Website is blocking us")
-                # Try alternative URL
-                alt_url = "https://www.almayadeen.net/news/politics"
-                logger.info(f"Trying alternative URL: {alt_url}")
-                time.sleep(3)
-                response = self.session.get(alt_url, timeout=20)
-            
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Multiple selectors
-            article_elements = soup.find_all('article', limit=Config.MAX_ARTICLES_PER_RUN)
-            
-            if not article_elements:
-                article_elements = soup.find_all('div', class_='article-card', limit=Config.MAX_ARTICLES_PER_RUN)
-            
-            if not article_elements:
-                article_elements = soup.find_all('div', class_='news-item', limit=Config.MAX_ARTICLES_PER_RUN)
-            
-            if not article_elements:
-                # Try finding any links with article pattern
-                article_elements = soup.find_all('a', href=re.compile(r'/news/'), limit=Config.MAX_ARTICLES_PER_RUN)
-            
-            logger.info(f"Found {len(article_elements)} article elements")
-            
-            for idx, article in enumerate(article_elements):
-                try:
-                    article_data = self._extract_article_data(article)
-                    if article_data:
-                        articles.append(article_data)
-                        logger.info(f"Extracted: {article_data['headline'][:50]}...")
-                    
-                    if idx < len(article_elements) - 1:
-                        time.sleep(2)
-                        
-                except Exception as e:
-                    logger.error(f"Error extracting article {idx}: {str(e)}")
-                    continue
-            
-            logger.info(f"Successfully scraped {len(articles)} articles")
-            
-        except requests.RequestException as e:
-            logger.error(f"Request failed: {str(e)}")
-        except Exception as e:
-            logger.error(f"Scraping error: {str(e)}")
+        # Almayadeen RSS feeds
+        rss_feeds = [
+            'https://www.almayadeen.net/rss/news',
+            'https://www.almayadeen.net/rss',
+            'https://www.almayadeen.net/ar/rss/news',
+        ]
         
-        return articles
-    
-    def _extract_article_data(self, article_element):
-        try:
-            # Find headline
-            headline_elem = (
-                article_element.find('h2') or 
-                article_element.find('h3') or 
-                article_element.find('h1') or
-                article_element.find('a', class_='title') or
-                article_element.find(class_='article-title') or
-                article_element.find(class_='headline')
-            )
-            
-            # If element IS an 'a' tag
-            if article_element.name == 'a':
-                headline = article_element.get_text(strip=True)
-                link_elem = article_element
-            elif not headline_elem:
-                return None
-            else:
-                headline = headline_elem.get_text(strip=True)
-                link_elem = headline_elem.find('a') if headline_elem.name != 'a' else headline_elem
-            
-            if not headline:
-                return None
-            
-            if not link_elem:
-                link_elem = article_element.find('a')
-            
-            if not link_elem:
-                return None
+        for feed_url in rss_feeds:
+            try:
+                logger.info(f"Fetching RSS feed from {feed_url}")
                 
-            url = urljoin(Config.BASE_URL, link_elem.get('href', ''))
+                response = self.session.get(feed_url, timeout=15)
+                
+                if response.status_code == 200:
+                    logger.info(f"✅ Successfully accessed {feed_url}")
+                    feed = feedparser.parse(response.content)
+                    
+                    logger.info(f"Found {len(feed.entries)} entries in feed")
+                    
+                    for entry in feed.entries[:Config.MAX_ARTICLES_PER_RUN]:
+                        try:
+                            article_data = self._extract_from_rss_entry(entry)
+                            if article_data:
+                                articles.append(article_data)
+                                logger.info(f"Extracted: {article_data['headline'][:50]}...")
+                        except Exception as e:
+                            logger.error(f"Error extracting entry: {str(e)}")
+                            continue
+                    
+                    # If we got articles, stop trying other feeds
+                    if articles:
+                        break
+                else:
+                    logger.warning(f"Status {response.status_code} for {feed_url}")
+                    
+            except Exception as e:
+                logger.error(f"Error fetching {feed_url}: {str(e)}")
+                continue
+        
+        # Remove duplicates
+        unique_articles = []
+        seen_ids = set()
+        
+        for article in articles:
+            if article['id'] not in seen_ids:
+                unique_articles.append(article)
+                seen_ids.add(article['id'])
+        
+        logger.info(f"Successfully scraped {len(unique_articles)} unique articles")
+        
+        return unique_articles
+    
+    def _extract_from_rss_entry(self, entry):
+        try:
+            headline = entry.get('title', 'No title')
+            url = entry.get('link', '')
             
-            # Skip if not a valid article URL
-            if '/news/' not in url:
+            if not url:
                 return None
             
-            # Find time
-            time_elem = (
-                article_element.find('time') or 
-                article_element.find(class_='date') or
-                article_element.find(class_='time') or
-                article_element.find(class_='timestamp')
-            )
+            # Get publication time
+            pub_time = "Recently"
+            if hasattr(entry, 'published'):
+                pub_time = entry.published
+            elif hasattr(entry, 'updated'):
+                pub_time = entry.updated
             
-            pub_time = time_elem.get_text(strip=True) if time_elem else "Recently"
+            # Get summary
+            summary = ""
+            if hasattr(entry, 'summary'):
+                summary = entry.summary
+            elif hasattr(entry, 'description'):
+                summary = entry.description
             
-            # Find summary
-            summary_elem = (
-                article_element.find('p', class_='description') or
-                article_element.find('p', class_='summary') or
-                article_element.find('div', class_='excerpt') or
-                article_element.find('p')
-            )
+            # Clean HTML tags from summary
+            import re
+            summary = re.sub(r'<[^>]+>', '', summary)
+            summary = summary.strip()[:500]
             
-            summary = summary_elem.get_text(strip=True) if summary_elem else ""
+            if not summary:
+                summary = f"News from Almayadeen: {headline}"
             
-            if not summary or len(summary) < 30:
-                summary = f"News article from Almayadeen: {headline}"
+            # Limit to 3 sentences
+            sentences = re.split(r'[.!?؟]+', summary)
+            sentences = [s.strip() for s in sentences if s.strip()]
+            summary = '. '.join(sentences[:3])
             
-            summary = self._limit_to_sentences(summary, 3)
+            if summary and not summary.endswith('.'):
+                summary += '.'
             
             article_id = self.generate_article_id(url)
             
@@ -178,18 +127,5 @@ class AlmayadeenScraper:
             }
             
         except Exception as e:
-            logger.error(f"Error extracting article data: {str(e)}")
+            logger.error(f"Error parsing RSS entry: {str(e)}")
             return None
-    
-    def _limit_to_sentences(self, text, num_sentences=3):
-        if not text:
-            return ""
-        
-        sentences = re.split(r'[.!?؟。]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        
-        limited = '. '.join(sentences[:num_sentences])
-        if limited and not limited.endswith('.'):
-            limited += '.'
-        
-        return limited
