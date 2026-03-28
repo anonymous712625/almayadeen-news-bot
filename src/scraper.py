@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from config.config import Config
 import hashlib
+import re
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,7 +16,9 @@ class AlmayadeenScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
         })
         
     def generate_article_id(self, url):
@@ -24,21 +27,25 @@ class AlmayadeenScraper:
     def scrape_articles(self):
         articles = []
         
-        # Almayadeen RSS feeds
+        # Al-Manar RSS feeds
         rss_feeds = [
-            'https://www.almayadeen.net/rss/news',
-            'https://www.almayadeen.net/rss',
-            'https://www.almayadeen.net/ar/rss/news',
+            'https://almanar.com.lb/rss',
+            'https://www.almanar.com.lb/rss/news',
+            'https://english.almanar.com.lb/rss',
         ]
         
         for feed_url in rss_feeds:
             try:
                 logger.info(f"Fetching RSS feed from {feed_url}")
                 
-                response = self.session.get(feed_url, timeout=15)
+                response = self.session.get(feed_url, timeout=20, verify=True)
+                
+                logger.info(f"Response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     logger.info(f"✅ Successfully accessed {feed_url}")
+                    
+                    # Parse RSS feed
                     feed = feedparser.parse(response.content)
                     
                     logger.info(f"Found {len(feed.entries)} entries in feed")
@@ -78,10 +85,10 @@ class AlmayadeenScraper:
     
     def _extract_from_rss_entry(self, entry):
         try:
-            headline = entry.get('title', 'No title')
-            url = entry.get('link', '')
+            headline = entry.get('title', 'No title').strip()
+            url = entry.get('link', '').strip()
             
-            if not url:
+            if not url or not headline:
                 return None
             
             # Get publication time
@@ -90,6 +97,9 @@ class AlmayadeenScraper:
                 pub_time = entry.published
             elif hasattr(entry, 'updated'):
                 pub_time = entry.updated
+            elif hasattr(entry, 'published_parsed'):
+                from time import strftime
+                pub_time = strftime('%Y-%m-%d %H:%M', entry.published_parsed)
             
             # Get summary
             summary = ""
@@ -97,17 +107,24 @@ class AlmayadeenScraper:
                 summary = entry.summary
             elif hasattr(entry, 'description'):
                 summary = entry.description
+            elif hasattr(entry, 'content'):
+                summary = entry.content[0].value if entry.content else ""
             
             # Clean HTML tags from summary
-            import re
             summary = re.sub(r'<[^>]+>', '', summary)
-            summary = summary.strip()[:500]
+            summary = summary.strip()
             
-            if not summary:
-                summary = f"News from Almayadeen: {headline}"
+            # Remove extra whitespace
+            summary = ' '.join(summary.split())
+            
+            if not summary or len(summary) < 20:
+                summary = f"Al-Manar News: {headline}"
+            
+            # Limit to 500 chars
+            summary = summary[:500]
             
             # Limit to 3 sentences
-            sentences = re.split(r'[.!?؟]+', summary)
+            sentences = re.split(r'[.!?؟。]+', summary)
             sentences = [s.strip() for s in sentences if s.strip()]
             summary = '. '.join(sentences[:3])
             
